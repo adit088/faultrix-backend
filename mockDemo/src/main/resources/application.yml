@@ -1,0 +1,26 @@
+# application settings for mockDemo service
+spring:
+  application:
+    name: mockDemo
+
+# delays and failures for REST clients
+rest:
+  template:
+    connect-timeout: 3000
+    read-timeout: 3000
+
+# settings for Entropi fault injection
+ntropi:
+  chaos:
+    seed: 42
+    failure-rate: 0.3
+    max-delay-ms: 2000
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+
