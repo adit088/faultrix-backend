@@ -33,7 +33,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             "/h2-console",
             "/actuator/health",
             "/actuator/prometheus",
-            "/api/v1/system"
+            "/api/v1/system",
+            "/api/v1/auth"      // register + login — public by design
     };
 
     public ApiKeyAuthFilter(OrganizationRepository organizationRepository,
