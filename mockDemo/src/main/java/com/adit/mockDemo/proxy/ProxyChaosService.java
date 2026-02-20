@@ -13,6 +13,7 @@ import com.adit.mockDemo.repository.ChaosScheduleRepository;
 import com.adit.mockDemo.service.ChaosRuleService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -27,17 +28,20 @@ import java.util.UUID;
  * Core service powering the Faultrix HTTP chaos proxy.
  *
  * Flow for every proxied request:
- *   1. Extract target = path component of upstream URL
- *   2. Look up chaos rule for this org + target (exact → prefix → regex → default)
- *   3. Run ChaosDecisionEngine (kill switch → enabled → schedule → blast radius → probability)
- *   4. Log the decision (DB + webhooks, async)
+ *   1. SSRF validate upstream URL (SsrfGuard — blocks private IPs, metadata endpoints)
+ *   2. Extract target = path component of upstream URL
+ *   3. Look up chaos rule for this org + target (exact → prefix → regex → default)
+ *   4. Run ChaosDecisionEngine (kill switch → enabled → schedule → blast radius → probability)
+ *   5. Log the decision (DB + webhooks, async)
  *   5a. If chaos type = ERROR/EXCEPTION → return synthetic error response, skip upstream
- *   5b. If chaos type = LATENCY         → sleep, then forward to upstream
- *   5c. If no chaos                     → forward to upstream immediately
- *   6. Return ProxyResponse with chaos metadata attached
+ *   5b. If chaos type = LATENCY         → sleep (capped at MAX_LATENCY_MS), then forward
+ *   5c. If no chaos                     → forward immediately
+ *   6. Return ProxyResponse with X-Faultrix-* metadata
  *
- * This means ANY language (Node, Python, Go, Ruby, etc.) can integrate Faultrix
- * by routing their outbound HTTP through this endpoint. No SDK needed.
+ * Security:
+ *   - SSRF protection via SsrfGuard — validated before any upstream call
+ *   - Latency injection capped at UpstreamForwarder.MAX_LATENCY_MS to prevent thread exhaustion
+ *   - SsrfException surfaces as 400 Bad Request (not 500) so the error is clear to the caller
  */
 @Service
 @Slf4j
@@ -51,30 +55,42 @@ public class ProxyChaosService {
     private final ChaosRuleRepository     chaosRuleRepository;
     private final ChaosScheduleRepository scheduleRepository;
     private final UpstreamForwarder       upstreamForwarder;
+    private final SsrfGuard               ssrfGuard;
 
     /**
      * Main entry point: process one proxied HTTP request.
      */
     public ProxyResponse process(Organization org, ProxyRequest req) {
         String requestId = UUID.randomUUID().toString();
-        String target    = extractTarget(req.getUrl());
+
+        // ── 0. SSRF validation — before anything else ────────────────────────
+        // Return 400 immediately if the URL is blocked — don't log a chaos event
+        try {
+            ssrfGuard.validate(req.getUrl());
+        } catch (SsrfGuard.SsrfException e) {
+            log.warn("PROXY SSRF BLOCKED — Org: {}, URL: {}, Reason: {}, ReqId: {}",
+                    org.getSlug(), req.getUrl(), e.getMessage(), requestId);
+            return buildSsrfBlockedResponse(e.getMessage(), req.getUrl(), requestId);
+        }
+
+        String target = extractTarget(req.getUrl());
 
         log.info("PROXY REQUEST — Org: {}, Method: {}, URL: {}, Target: {}, ReqId: {}",
                 org.getSlug(), req.getMethod(), req.getUrl(), target, requestId);
 
-        // ── 1. Resolve chaos rule ────────────────────────────────────────────
+        // ── 1. Resolve chaos rule ─────────────────────────────────────────────
         ChaosRule rule = chaosRuleService.getRuleForChaosEngine(org, target);
 
-        // ── 2. Resolve schedules ─────────────────────────────────────────────
+        // ── 2. Resolve schedules ──────────────────────────────────────────────
         List<ChaosSchedule> schedules = resolveSchedules(org, rule.getTarget());
 
-        // ── 3. Make chaos decision ───────────────────────────────────────────
+        // ── 3. Make chaos decision ────────────────────────────────────────────
         ChaosDecision decision = decisionEngine.decide(rule, requestId, schedules);
 
-        // ── 4. Log the decision async (DB + webhooks) ────────────────────────
+        // ── 4. Log the decision async (DB + webhooks) ─────────────────────────
         eventLogger.logDecision(org, target, decision, requestId);
 
-        // ── 5. Execute based on decision ─────────────────────────────────────
+        // ── 5. Execute based on decision ──────────────────────────────────────
         return executeDecision(req, decision, target, requestId);
     }
 
@@ -93,9 +109,14 @@ public class ProxyChaosService {
         ChaosType type = decision.getChaosType();
 
         if (type == ChaosType.LATENCY) {
-            // Latency only — sleep then forward
-            injectLatency(decision.getDelayMs());
-            return forwardToUpstream(req, decision, target, requestId, decision.getDelayMs());
+            // Latency injection — cap at MAX_LATENCY_MS to prevent thread exhaustion
+            int cappedDelay = Math.min(decision.getDelayMs(), UpstreamForwarder.MAX_LATENCY_MS);
+            if (cappedDelay != decision.getDelayMs()) {
+                log.warn("PROXY LATENCY CAPPED — requested {}ms, capped to {}ms to protect thread pool",
+                        decision.getDelayMs(), cappedDelay);
+            }
+            injectLatency(cappedDelay);
+            return forwardToUpstream(req, decision, target, requestId, cappedDelay);
         }
 
         if (decision.isError() || decision.isException()) {
@@ -119,9 +140,8 @@ public class ProxyChaosService {
                 req.getBody()
         );
 
-        Map<String, String> responseHeaders = new HashMap<>(result.getHeaders() != null
-                ? result.getHeaders()
-                : Collections.emptyMap());
+        Map<String, String> responseHeaders = new HashMap<>(
+                result.getHeaders() != null ? result.getHeaders() : Collections.emptyMap());
 
         // Always add Faultrix tracing headers
         responseHeaders.put("X-Faultrix-Request-Id", requestId);
@@ -182,7 +202,32 @@ public class ProxyChaosService {
                 .build();
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    private ProxyResponse buildSsrfBlockedResponse(String reason, String url, String requestId) {
+        String body = String.format(
+                "{\"errorCode\":\"SSRF_BLOCKED\",\"message\":\"Request blocked: %s\",\"requestId\":\"%s\"}",
+                reason.replace("\"", "'"),
+                requestId
+        );
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Content-Type", "application/json");
+        headers.put("X-Faultrix-Request-Id", requestId);
+        headers.put("X-Faultrix-Blocked", "SSRF");
+
+        return ProxyResponse.builder()
+                .status(HttpStatus.BAD_REQUEST.value())   // 400 — clear signal to the caller
+                .body(body)
+                .headers(headers)
+                .chaosInjected(false)
+                .chaosType(null)
+                .injectedDelayMs(0)
+                .target(url)
+                .requestId(requestId)
+                .processedAt(Instant.now())
+                .build();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
      * Extract the path component of the URL as the "target" for rule matching.
@@ -191,9 +236,6 @@ public class ProxyChaosService {
      *   https://api.stripe.com/v1/charges      → /v1/charges
      *   https://api.example.com/users/123      → /users/123
      *   https://payments.svc/health            → /health
-     *
-     * This lets chaos rules use patterns like "/v1/charges" or PREFIX "/v1/"
-     * to match requests regardless of which upstream host is being called.
      */
     private String extractTarget(String url) {
         try {
@@ -218,6 +260,17 @@ public class ProxyChaosService {
         }
     }
 
+    /**
+     * Inject latency by blocking the current thread.
+     *
+     * This is safe because:
+     *  - Delay is capped at MAX_LATENCY_MS (8s) in executeDecision above
+     *  - The proxy endpoint has its own rate limit (same as all endpoints)
+     *  - Railway provides enough threads for reasonable concurrent load
+     *
+     * A full async/reactive approach would be better at very high scale,
+     * but requires migrating to WebFlux — not appropriate for this Spring MVC app.
+     */
     private void injectLatency(int delayMs) {
         if (delayMs <= 0) return;
         try {
