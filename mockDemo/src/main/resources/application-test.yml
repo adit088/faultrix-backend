@@ -1,0 +1,34 @@
+## 📄 CREATE FILE: src/main/resources/application-test.yml
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:chaoslab_test
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+  h2:
+    console:
+      enabled: false
+
+  flyway:
+    enabled: false
+
+  cache:
+    type: none
+
+logging:
+  level:
+    root: ERROR
+    com.adit.mockDemo: INFO
+
+ntropi:
+  chaos:
+    seed: 42
+    failure-rate: 0.0
+    max-delay-ms: 0

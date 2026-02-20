@@ -1,0 +1,45 @@
+## 📄 CREATE FILE: src/main/resources/application-dev.yml
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:chaoslab_dev
+    username: sa
+    password:
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    clean-disabled: false
+
+logging:
+  level:
+    root: INFO
+    com.adit.mockDemo: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.springframework.web: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+  endpoint:
+    health:
+      show-details: always
+
+server:
+  port: 8080

@@ -1,0 +1,60 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chaoslab}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:@12Aditjaggi}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      auto-commit: false
+      connection-test-query: SELECT 1
+
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          batch_size: 50
+          fetch_size: 100
+
+  h2:
+    console:
+      enabled: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    clean-disabled: true
+
+logging:
+  level:
+    root: WARN
+    com.adit.mockDemo: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] [%X{organization}] %logger{36} - %msg%n"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+server:
+  port: ${PORT:8080}
+  compression:
+    enabled: true
+  http2:
+    enabled: true
+  error:
+    include-stacktrace: never

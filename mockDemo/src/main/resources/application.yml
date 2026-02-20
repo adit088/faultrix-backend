@@ -1,26 +1,95 @@
-# application settings for mockDemo service
+## 📄 UPDATE FILE: src/main/resources/application.yml
+
 spring:
   application:
-    name: mockDemo
+    name: chaoslab-server
 
-# delays and failures for REST clients
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:prod}
+
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      auto-commit: false
+      connection-test-query: SELECT 1
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          batch_size: 20
+          fetch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  cache:
+    type: simple
+
+ntropi:
+  chaos:
+    seed: 42
+    failure-rate: 0.0
+    max-delay-ms: 0
+
 rest:
   template:
     connect-timeout: 3000
     read-timeout: 3000
 
-# settings for Entropi fault injection
-ntropi:
-  chaos:
-    seed: 42
-    failure-rate: 0.3
-    max-delay-ms: 2000
-
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+  metrics:
+    tags:
+      application: chaoslab
+      environment: ${ENVIRONMENT:development}
 
+server:
+  port: ${PORT:8080}
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  http2:
+    enabled: true
 
+logging:
+  level:
+    root: INFO
+    com.adit.mockDemo: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] [%X{organization}] %logger{36} - %msg%n"
+  file:
+    name: logs/chaoslab.log
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
