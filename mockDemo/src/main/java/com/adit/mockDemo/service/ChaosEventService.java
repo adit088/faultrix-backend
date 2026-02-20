@@ -85,6 +85,7 @@ public class ChaosEventService {
 
         PageRequest pageable = PageRequest.of(page, limit);
 
+        // Pass org.getId() — the native query in ChaosEventRepository takes orgId (Long), not the entity
         List<ChaosEvent> events = eventRepository
                 .findEvents(org.getId(), target, from, to, injected, pageable);
 
