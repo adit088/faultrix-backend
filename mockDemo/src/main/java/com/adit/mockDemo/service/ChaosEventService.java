@@ -86,7 +86,7 @@ public class ChaosEventService {
         PageRequest pageable = PageRequest.of(page, limit);
 
         List<ChaosEvent> events = eventRepository
-                .findEvents(org, target, from, to, injected, pageable);
+                .findEvents(org.getId(), target, from, to, injected, pageable);
 
         List<ChaosEventResponse> responses = events.stream()
                 .map(this::mapToResponse)

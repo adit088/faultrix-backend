@@ -14,18 +14,24 @@ import java.util.List;
 @Repository
 public interface ChaosEventRepository extends JpaRepository<ChaosEvent, Long> {
 
-    @Query("""
-            SELECT e FROM ChaosEvent e
-            WHERE e.organization = :org
-            AND (:target   IS NULL OR e.target   = :target)
-            AND (:from     IS NULL OR e.occurredAt >= :from)
-            AND (:to       IS NULL OR e.occurredAt <= :to)
-            AND (:injected IS NULL OR e.injected  = :injected)
-            ORDER BY e.occurredAt DESC
-            """)
+    /**
+     * Native query — avoids PostgreSQL's inability to infer types of null JPQL parameters.
+     * JPQL ":injected IS NULL OR e.injected = :injected" fails with "could not determine
+     * data type of parameter $4" when injected is null because PostgreSQL can't cast null
+     * to boolean without an explicit hint. Native SQL with CAST solves this cleanly.
+     */
+    @Query(value = """
+            SELECT * FROM chaos_events
+            WHERE organization_id = :orgId
+            AND (CAST(:target   AS text)        IS NULL OR target      = :target)
+            AND (CAST(:from     AS timestamptz) IS NULL OR occurred_at >= CAST(:from AS timestamptz))
+            AND (CAST(:to       AS timestamptz) IS NULL OR occurred_at <= CAST(:to   AS timestamptz))
+            AND (CAST(:injected AS boolean)     IS NULL OR injected    = CAST(:injected AS boolean))
+            ORDER BY occurred_at DESC
+            """, nativeQuery = true)
     List<ChaosEvent> findEvents(
-            @Param("org")      Organization org,
-            @Param("target")   String target,
+            @Param("orgId")    Long    orgId,
+            @Param("target")   String  target,
             @Param("from")     Instant from,
             @Param("to")       Instant to,
             @Param("injected") Boolean injected,
@@ -78,7 +84,6 @@ public interface ChaosEventRepository extends JpaRepository<ChaosEvent, Long> {
             @Param("to")   Instant to
     );
 
-    // Native PostgreSQL query — EXTRACT returns numeric, mapped as Double in Java
     @Query(value = """
             SELECT
                 EXTRACT(HOUR FROM occurred_at)  AS hr,
