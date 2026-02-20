@@ -40,7 +40,8 @@ public class ChaosAspect {
             "&& !within(com.adit.mockDemo.controller.SystemController) " +
             "&& !within(com.adit.mockDemo.controller.TrafficController) " +
             "&& !within(com.adit.mockDemo.controller.ChaosExperimentController) " +
-            "&& !within(com.adit.mockDemo.insights.InsightController)")
+            "&& !within(com.adit.mockDemo.insights.InsightController) " +
+            "&& !within(com.adit.mockDemo.proxy.ProxyController)")
     public void controllerMethods() {}
 
     /**
