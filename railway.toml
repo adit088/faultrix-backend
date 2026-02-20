@@ -1,5 +1,5 @@
 [build]
-buildCommand = "cd mockDemo && mvn clean package -DskipTests"
+buildCommand = "apt-get install -y maven && cd mockDemo && mvn clean package -DskipTests"
 
 [deploy]
 startCommand = "java -jar mockDemo/target/*.jar"
