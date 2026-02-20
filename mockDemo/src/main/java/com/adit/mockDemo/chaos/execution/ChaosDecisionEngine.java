@@ -127,28 +127,55 @@ public class ChaosDecisionEngine {
     }
 
     private ChaosType determineFailureType(double roll) {
-        if (roll < 0.3) return ChaosType.ERROR_5XX;
-        if (roll < 0.6) return ChaosType.ERROR_4XX;
-        if (roll < 0.8) return ChaosType.TIMEOUT;
-        return ChaosType.EXCEPTION;
+        // Original 4 types: 0.0–0.55 (55%)
+        // New 8 types:      0.55–1.0 (45%) — distributed evenly at ~5.6% each
+        if (roll < 0.20) return ChaosType.ERROR_5XX;
+        if (roll < 0.40) return ChaosType.ERROR_4XX;
+        if (roll < 0.50) return ChaosType.TIMEOUT;
+        if (roll < 0.55) return ChaosType.EXCEPTION;
+        // New types
+        if (roll < 0.61) return ChaosType.PACKET_LOSS;
+        if (roll < 0.67) return ChaosType.DNS_FAILURE;
+        if (roll < 0.73) return ChaosType.BANDWIDTH_LIMIT;
+        if (roll < 0.79) return ChaosType.CORRUPT_BODY;
+        if (roll < 0.85) return ChaosType.HEADER_INJECT;
+        if (roll < 0.91) return ChaosType.CPU_SPIKE;
+        if (roll < 0.96) return ChaosType.MEMORY_PRESSURE;
+        return ChaosType.BLACKHOLE;
     }
 
     private int determineErrorCode(ChaosType type, double roll) {
         return switch (type) {
-            case ERROR_5XX -> { int[] c = {500,502,503,504}; yield c[(int)(roll*c.length)%c.length]; }
-            case ERROR_4XX -> { int[] c = {400,404,429,408}; yield c[(int)(roll*c.length)%c.length]; }
-            case TIMEOUT   -> 408;
-            default        -> 500;
+            case ERROR_5XX      -> { int[] c = {500,502,503,504}; yield c[(int)(roll*c.length)%c.length]; }
+            case ERROR_4XX      -> { int[] c = {400,404,429,408}; yield c[(int)(roll*c.length)%c.length]; }
+            case TIMEOUT        -> 408;
+            case PACKET_LOSS    -> 200;   // Accepts connection, returns empty — caller sees success but body is gone
+            case DNS_FAILURE    -> 503;   // Service Unavailable (DNS couldn't resolve)
+            case BANDWIDTH_LIMIT-> 200;   // Returns 200 but response is throttled
+            case CORRUPT_BODY   -> 200;   // Returns 200 — payload is the chaos
+            case HEADER_INJECT  -> 200;   // Returns 200 — bad headers are the chaos
+            case CPU_SPIKE      -> 200;   // Slow but succeeds — simulates CPU-saturated upstream
+            case MEMORY_PRESSURE-> 200;   // Slow but succeeds — simulates GC pressure
+            case BLACKHOLE      -> 504;   // Gateway Timeout — caller times out
+            default             -> 500;
         };
     }
 
     private String generateErrorMessage(ChaosType type) {
         return switch (type) {
-            case ERROR_5XX -> "Internal Server Error - Chaos Engineering Simulation";
-            case ERROR_4XX -> "Bad Request - Chaos Engineering Simulation";
-            case TIMEOUT   -> "Request Timeout - Chaos Engineering Simulation";
-            case EXCEPTION -> "Service Unavailable - Chaos Engineering Simulation";
-            default        -> null;
+            case ERROR_5XX       -> "Internal Server Error - Chaos Engineering Simulation";
+            case ERROR_4XX       -> "Bad Request - Chaos Engineering Simulation";
+            case TIMEOUT         -> "Request Timeout - Chaos Engineering Simulation";
+            case EXCEPTION       -> "Service Unavailable - Chaos Engineering Simulation";
+            case PACKET_LOSS     -> "Packet Loss - Connection dropped by Faultrix";
+            case DNS_FAILURE     -> "DNS Resolution Failed - NXDOMAIN (Chaos Engineering Simulation)";
+            case BANDWIDTH_LIMIT -> "Bandwidth Limited - Response throttled by Faultrix";
+            case CORRUPT_BODY    -> "Corrupted Response Body - Chaos Engineering Simulation";
+            case HEADER_INJECT   -> "Injected Response Headers - Chaos Engineering Simulation";
+            case CPU_SPIKE       -> "CPU Spike Simulation - Artificial compute delay injected";
+            case MEMORY_PRESSURE -> "Memory Pressure Simulation - Artificial heap allocation injected";
+            case BLACKHOLE       -> "Blackhole - Request accepted but response dropped (Chaos Engineering)";
+            default              -> null;
         };
     }
 }
