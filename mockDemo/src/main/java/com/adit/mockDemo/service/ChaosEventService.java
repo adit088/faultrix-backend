@@ -85,7 +85,6 @@ public class ChaosEventService {
 
         PageRequest pageable = PageRequest.of(page, limit);
 
-        // Pass org.getId() — the native query in ChaosEventRepository takes orgId (Long), not the entity
         List<ChaosEvent> events = eventRepository
                 .findEvents(org.getId(), target, from, to, injected, pageable);
 
@@ -93,10 +92,19 @@ public class ChaosEventService {
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
 
+        // FIX BUG-1: populate nextCursor so frontend "load more" works
+        // nextCursor = ID of the last item returned; frontend passes it as ?cursor=N on next call
+        Long nextCursor = null;
+        boolean hasMore = responses.size() == limit;
+        if (hasMore && !responses.isEmpty()) {
+            nextCursor = responses.get(responses.size() - 1).getId();
+        }
+
         PageResponse.PaginationMetadata meta = PageResponse.PaginationMetadata.builder()
+                .nextCursor(nextCursor)
                 .count(responses.size())
                 .limit(limit)
-                .hasMore(responses.size() == limit)
+                .hasMore(hasMore)
                 .build();
 
         return PageResponse.<ChaosEventResponse>builder()

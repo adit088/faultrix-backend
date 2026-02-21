@@ -1,6 +1,8 @@
 package com.adit.mockDemo.controller;
 
 import com.adit.mockDemo.chaos.execution.ChaosKillSwitch;
+import com.adit.mockDemo.entity.Organization;
+import com.adit.mockDemo.security.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,12 +22,15 @@ import java.util.Map;
 public class ChaosControlController {
 
     private final ChaosKillSwitch killSwitch;
+    private final TenantContext   tenantContext;
 
     @GetMapping("/status")
-    @Operation(summary = "Get global chaos status")
+    @Operation(summary = "Get chaos status for the authenticated organization")
     public ResponseEntity<Map<String, Object>> getStatus() {
-        log.info("GET /api/v1/chaos/control/status");
-        boolean active = killSwitch.isChaosEnabled();
+        Organization org = tenantContext.getCurrentOrganization();
+        log.info("GET /api/v1/chaos/control/status - Org: {}", org.getSlug());
+
+        boolean active = killSwitch.isChaosEnabled(org.getId());
         return ResponseEntity.ok(Map.of(
                 "enabled", active,
                 "message", active
@@ -35,35 +40,41 @@ public class ChaosControlController {
     }
 
     @PostMapping("/enable")
-    @Operation(summary = "Enable all chaos injection globally")
+    @Operation(summary = "Enable chaos injection for this organization")
     public ResponseEntity<Map<String, Object>> enableChaos() {
-        log.warn("POST /api/v1/chaos/control/enable - Enabling chaos globally");
-        killSwitch.enableChaos();
+        Organization org = tenantContext.getCurrentOrganization();
+        log.warn("POST /api/v1/chaos/control/enable - Enabling chaos for org: {}", org.getSlug());
+
+        killSwitch.enableChaos(org.getId());
         return ResponseEntity.ok(Map.of(
                 "enabled", true,
-                "message", "Chaos injection enabled globally"
+                "message", "Chaos injection enabled"
         ));
     }
 
     @PostMapping("/disable")
     @Operation(
-            summary = "Disable all chaos injection globally (EMERGENCY STOP)",
-            description = "⚠️ EMERGENCY: Instantly stops ALL chaos injection across all organizations"
+            summary = "Disable chaos injection for this organization (EMERGENCY STOP)",
+            description = "⚠️ EMERGENCY: Instantly stops ALL chaos injection for this organization"
     )
     public ResponseEntity<Map<String, Object>> disableChaos() {
-        log.error("POST /api/v1/chaos/control/disable - KILL SWITCH ACTIVATED");
-        killSwitch.disableChaos();
+        Organization org = tenantContext.getCurrentOrganization();
+        log.error("POST /api/v1/chaos/control/disable - KILL SWITCH for org: {}", org.getSlug());
+
+        killSwitch.disableChaos(org.getId());
         return ResponseEntity.ok(Map.of(
                 "enabled", false,
-                "message", "🛑 EMERGENCY STOP: All chaos injection disabled"
+                "message", "🛑 EMERGENCY STOP: Chaos injection disabled"
         ));
     }
 
     @PostMapping("/toggle")
-    @Operation(summary = "Toggle chaos injection state")
+    @Operation(summary = "Toggle chaos injection state for this organization")
     public ResponseEntity<Map<String, Object>> toggleChaos() {
-        log.warn("POST /api/v1/chaos/control/toggle");
-        boolean newState = killSwitch.toggle();
+        Organization org = tenantContext.getCurrentOrganization();
+        log.warn("POST /api/v1/chaos/control/toggle - Org: {}", org.getSlug());
+
+        boolean newState = killSwitch.toggle(org.getId());
         return ResponseEntity.ok(Map.of(
                 "enabled", newState,
                 "message", newState ? "Chaos enabled" : "Chaos disabled"

@@ -19,12 +19,14 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Per-tenant rate limiting filter (no external dependencies).
  * Uses sliding window algorithm with synchronized per-org queues for thread safety.
+ *
+ * FIX SEC-4: /actuator/prometheus removed from public bypass list.
+ * Prometheus scraping now requires a valid API key (or restrict at network/infra level).
  */
 @Component
 @Slf4j
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    // ArrayDeque per org — synchronized individually so orgs don't block each other
     private final Map<Long, Deque<Instant>> requestWindows = new ConcurrentHashMap<>();
 
     private static final Map<String, Integer> PLAN_LIMITS = Map.of(
@@ -50,7 +52,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         Organization org = (Organization) request.getAttribute("currentOrganization");
 
         if (org == null) {
-            // Not authenticated — let ApiKeyAuthFilter handle it
+            // Not authenticated — let ApiKeyAuthFilter handle the 401
             filterChain.doFilter(request, response);
             return;
         }
@@ -64,41 +66,39 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    /**
-     * Thread-safe sliding window check.
-     * All three operations (evict old, check size, add new) are atomic per org.
-     */
     private boolean isRateLimitExceeded(Organization org) {
         int limit = PLAN_LIMITS.getOrDefault(org.getPlan().toLowerCase(), 60);
 
         Deque<Instant> queue = requestWindows.computeIfAbsent(org.getId(), k -> new ArrayDeque<>());
 
-        Instant now = Instant.now();
+        Instant now         = Instant.now();
         Instant windowStart = now.minusMillis(WINDOW_SIZE_MS);
 
         synchronized (queue) {
-            // Evict timestamps outside the sliding window
             while (!queue.isEmpty() && queue.peekFirst().isBefore(windowStart)) {
                 queue.pollFirst();
             }
-
             if (queue.size() >= limit) {
                 return true;
             }
-
             queue.addLast(now);
             return false;
         }
     }
 
+    /**
+     * FIX SEC-4: /actuator/prometheus intentionally REMOVED from this list.
+     * Matches PUBLIC_PREFIXES in ApiKeyAuthFilter exactly.
+     */
     private boolean isPublicEndpoint(String path) {
-        return path.startsWith("/swagger-ui") ||
-                path.startsWith("/v3/api-docs") ||
-                path.startsWith("/h2-console") ||
+        return path.startsWith("/swagger-ui")    ||
+                path.startsWith("/v3/api-docs")   ||
+                path.startsWith("/h2-console")    ||
                 path.startsWith("/actuator/health") ||
-                path.startsWith("/actuator/prometheus") ||
                 path.startsWith("/api/v1/system") ||
+                path.startsWith("/api/v1/auth")   ||
                 path.equals("/");
+        // /actuator/prometheus intentionally absent (SEC-4)
     }
 
     private void sendRateLimitExceeded(HttpServletResponse response, Organization org) throws IOException {
@@ -134,7 +134,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
             }
         });
 
-        // Remove empty queues
         requestWindows.entrySet().removeIf(entry -> {
             synchronized (entry.getValue()) {
                 return entry.getValue().isEmpty();

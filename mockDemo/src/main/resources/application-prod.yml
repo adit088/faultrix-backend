@@ -2,7 +2,7 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chaoslab}
     username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:@12Aditjaggi}
+    password: ${DB_PASSWORD}            # FIX SEC-1: no default — app will refuse to start if unset
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -48,7 +48,7 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized   # FIX SEC-6: was "always" — do not expose DB/disk details publicly
 
 server:
   port: ${PORT:8080}

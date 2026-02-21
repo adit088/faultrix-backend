@@ -1,11 +1,13 @@
-## 📄 UPDATE FILE: src/main/resources/application.yml
-
 spring:
   application:
     name: chaoslab-server
 
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:prod}
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false   # FIX BUG-6/7: Instant → ISO-8601 strings, not epoch numbers
 
   datasource:
     hikari:

@@ -14,6 +14,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
@@ -26,16 +31,28 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private static final String API_KEY_HEADER = "X-API-Key";
     private static final String ORG_ATTRIBUTE  = "currentOrganization";
 
-    // All paths that bypass auth — must be kept minimal and explicit
+    /**
+     * FIX SEC-4: /actuator/prometheus REMOVED from public prefixes.
+     * Prometheus metrics expose internal details (DB pool, error rates, heap) — require auth.
+     * Configure your Prometheus scraper to supply X-API-Key, or restrict to internal network.
+     *
+     * /api/v1/auth is still public — register + login don't need an API key.
+     */
     private static final String[] PUBLIC_PREFIXES = {
             "/swagger-ui",
             "/v3/api-docs",
             "/h2-console",
-            "/actuator/health",
-            "/actuator/prometheus",
+            "/actuator/health",   // health check only — show-details: when-authorized in prod config
             "/api/v1/system",
-            "/api/v1/auth"      // register + login — public by design
+            "/api/v1/auth"        // register + login — public by design
+            // /actuator/prometheus intentionally REMOVED (SEC-4)
     };
+
+    // FIX SEC-8: IP-based rate limiting for auth endpoints (brute-force / spam protection)
+    // 10 requests per minute per IP — independent of org-level rate limiting
+    private static final int    AUTH_RATE_LIMIT_PER_MIN = 10;
+    private static final long   AUTH_WINDOW_MS          = 60_000L;
+    private final Map<String, Deque<Instant>> authIpWindows = new ConcurrentHashMap<>();
 
     public ApiKeyAuthFilter(OrganizationRepository organizationRepository,
                             ApiKeyHasher apiKeyHasher,
@@ -56,6 +73,18 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         String path   = request.getRequestURI();
         String rawKey = request.getHeader(API_KEY_HEADER);
 
+        // FIX SEC-8: rate-limit auth endpoints by IP before allowing through
+        if (path.startsWith("/api/v1/auth")) {
+            String ip = getClientIp(request);
+            if (isAuthRateLimitExceeded(ip)) {
+                log.warn("Auth rate limit exceeded for IP: {}", ip);
+                sendTooManyRequests(response);
+                return;
+            }
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         if (isPublicEndpoint(path)) {
             filterChain.doFilter(request, response);
             return;
@@ -67,13 +96,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Hash the incoming raw key before DB lookup — DB stores only hashes
         String hashedKey = apiKeyHasher.hash(rawKey);
         Organization org = organizationRepository.findByApiKey(hashedKey).orElse(null);
 
         if (org == null) {
             apiAuthFailureCounter.increment();
-            // Log only the prefix of the raw key — never log the full key
             log.warn("Invalid API key attempted (prefix: {}...)",
                     rawKey.substring(0, Math.min(10, rawKey.length())));
             sendUnauthorized(response, "Invalid API key");
@@ -87,12 +114,9 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Set org on request — RateLimitFilter reads this downstream
         request.setAttribute(ORG_ATTRIBUTE, org);
-
         MDC.put("organization", org.getSlug());
         MDC.put("organizationId", org.getId().toString());
-
         log.debug("Authenticated request for organization: {}", org.getSlug());
 
         try {
@@ -102,6 +126,35 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             MDC.remove("organizationId");
         }
     }
+
+    // ── Auth IP rate limiter ──────────────────────────────────────────────────
+
+    private boolean isAuthRateLimitExceeded(String ip) {
+        Deque<Instant> queue = authIpWindows.computeIfAbsent(ip, k -> new ArrayDeque<>());
+        Instant now         = Instant.now();
+        Instant windowStart = now.minusMillis(AUTH_WINDOW_MS);
+
+        synchronized (queue) {
+            while (!queue.isEmpty() && queue.peekFirst().isBefore(windowStart)) {
+                queue.pollFirst();
+            }
+            if (queue.size() >= AUTH_RATE_LIMIT_PER_MIN) {
+                return true;
+            }
+            queue.addLast(now);
+            return false;
+        }
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private boolean isPublicEndpoint(String path) {
         for (String prefix : PUBLIC_PREFIXES) {
@@ -117,5 +170,16 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 "{\"errorCode\":\"UNAUTHORIZED\",\"message\":\"%s\",\"status\":401}",
                 message
         ));
+    }
+
+    private void sendTooManyRequests(HttpServletResponse response) throws IOException {
+        response.setStatus(429);
+        response.setContentType("application/json");
+        response.setHeader("Retry-After", "60");
+        response.getWriter().write(
+                "{\"errorCode\":\"RATE_LIMIT_EXCEEDED\"," +
+                        "\"message\":\"Too many auth requests. Try again in 60 seconds.\"," +
+                        "\"status\":429}"
+        );
     }
 }
