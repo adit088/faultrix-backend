@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/chaos/rules")
@@ -124,6 +125,35 @@ public class ChaosRuleController {
     public ResponseEntity<ChaosRuleResponse> updateRule(@PathVariable Long id, @Valid @RequestBody ChaosRuleRequest request) {
         Organization org = tenantContext.getCurrentOrganization();
         log.info("PUT /api/v1/chaos/rules/{} - Organization: {}", id, org.getSlug());
+
+        ChaosRuleResponse updated = chaosRuleService.updateRule(org, id, request);
+        return ResponseEntity.ok(updated);
+    }
+
+    @PatchMapping("/{id}")
+    @Operation(summary = "Partially update a chaos rule (e.g. toggle enabled)")
+    public ResponseEntity<ChaosRuleResponse> patchRule(@PathVariable Long id,
+                                                       @RequestBody java.util.Map<String, Object> patch) {
+        Organization org = tenantContext.getCurrentOrganization();
+        log.info("PATCH /api/v1/chaos/rules/{} - Organization: {}", id, org.getSlug());
+
+        // Load existing rule, apply only the patched fields, then save via updateRule
+        ChaosRuleResponse existing = chaosRuleService.getRuleById(org, id);
+
+        ChaosRuleRequest request = com.adit.mockDemo.dto.ChaosRuleRequest.builder()
+                .target(existing.getTarget())
+                .targetPattern(existing.getTargetPattern())
+                .targetingMode(existing.getTargetingMode())
+                .failureRate(existing.getFailureRate())
+                .maxDelayMs(existing.getMaxDelayMs())
+                .enabled(patch.containsKey("enabled")
+                        ? (Boolean) patch.get("enabled")
+                        : existing.getEnabled())
+                .description(existing.getDescription())
+                .blastRadius(existing.getBlastRadius())
+                .seed(existing.getSeed())
+                .tags(existing.getTags())
+                .build();
 
         ChaosRuleResponse updated = chaosRuleService.updateRule(org, id, request);
         return ResponseEntity.ok(updated);

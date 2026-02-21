@@ -27,7 +27,7 @@ public class ChaosControlController {
         log.info("GET /api/v1/chaos/control/status");
         boolean active = killSwitch.isChaosEnabled();
         return ResponseEntity.ok(Map.of(
-                "chaosEnabled", active,
+                "enabled", active,
                 "message", active
                         ? "Chaos injection is ACTIVE"
                         : "Chaos injection is DISABLED (kill switch activated)"
@@ -40,7 +40,7 @@ public class ChaosControlController {
         log.warn("POST /api/v1/chaos/control/enable - Enabling chaos globally");
         killSwitch.enableChaos();
         return ResponseEntity.ok(Map.of(
-                "chaosEnabled", true,
+                "enabled", true,
                 "message", "Chaos injection enabled globally"
         ));
     }
@@ -54,7 +54,7 @@ public class ChaosControlController {
         log.error("POST /api/v1/chaos/control/disable - KILL SWITCH ACTIVATED");
         killSwitch.disableChaos();
         return ResponseEntity.ok(Map.of(
-                "chaosEnabled", false,
+                "enabled", false,
                 "message", "🛑 EMERGENCY STOP: All chaos injection disabled"
         ));
     }
@@ -65,7 +65,7 @@ public class ChaosControlController {
         log.warn("POST /api/v1/chaos/control/toggle");
         boolean newState = killSwitch.toggle();
         return ResponseEntity.ok(Map.of(
-                "chaosEnabled", newState,
+                "enabled", newState,
                 "message", newState ? "Chaos enabled" : "Chaos disabled"
         ));
     }
