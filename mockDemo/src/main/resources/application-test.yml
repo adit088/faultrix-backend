@@ -1,34 +1,43 @@
-## 📄 CREATE FILE: src/main/resources/application-test.yml
+## application-test.yml — integration test profile
 
 spring:
   datasource:
-    url: jdbc:h2:mem:chaoslab_test
+    url: jdbc:h2:mem:chaoslab_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     username: sa
     password:
     driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
 
   jpa:
-    hibernate:
-      ddl-auto: create-drop
     show-sql: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: false
 
   h2:
     console:
       enabled: false
 
   flyway:
-    enabled: false
-
-  cache:
-    type: none
+    enabled: true
+    baseline-on-migrate: true
+    clean-disabled: false
 
 logging:
   level:
-    root: ERROR
-    com.adit.mockDemo: INFO
+    root: WARN
+    com.adit.mockDemo: DEBUG
 
-ntropi:
-  chaos:
-    seed: 42
-    failure-rate: 0.0
-    max-delay-ms: 0
+# ── SECURITY — fixed test secret for deterministic HMAC in tests ──────────────
+# HMAC-SHA256("test-api-key-abc123", "test-secret-fixed-for-deterministic-hmac")
+# = c8a7f3b2e1d4c5a6b7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0
+security:
+  api-key-secret: test-secret-fixed-for-deterministic-hmac
+
+# ── CORS ───────────────────────────────────────────────────────────────────────
+cors:
+  allowed-origins: http://localhost:3000

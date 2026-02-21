@@ -2,7 +2,7 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chaoslab}
     username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD}            # FIX SEC-1: no default — app will refuse to start if unset
+    password: ${DB_PASSWORD}            # no default — app refuses to start if unset (SEC-1)
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -48,7 +48,7 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: when-authorized   # FIX SEC-6: was "always" — do not expose DB/disk details publicly
+      show-details: when-authorized
 
 server:
   port: ${PORT:8080}
@@ -58,3 +58,17 @@ server:
     enabled: true
   error:
     include-stacktrace: never
+
+# ── SECURITY — REQUIRED ───────────────────────────────────────────────────────
+# Set API_KEY_SECRET env var in Railway before deploying.
+# Must be at least 32 random chars. Generate with: openssl rand -hex 32
+# If unset, app REFUSES to start (by design — ApiKeyHasher throws IllegalStateException).
+security:
+  api-key-secret: ${API_KEY_SECRET}
+
+# ── CORS — REQUIRED ───────────────────────────────────────────────────────────
+# Set CORS_ALLOWED_ORIGINS to your Vercel frontend URL in Railway env vars.
+# Example: https://faultrix.vercel.app
+# Comma-separate multiple origins: https://faultrix.vercel.app,https://faultrix-git-main.vercel.app
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS}

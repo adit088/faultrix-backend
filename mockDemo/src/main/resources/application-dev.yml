@@ -1,4 +1,4 @@
-## 📄 CREATE FILE: src/main/resources/application-dev.yml
+## application-dev.yml — local development profile
 
 spring:
   datasource:
@@ -43,3 +43,11 @@ management:
 
 server:
   port: 8080
+
+# ── SECURITY (dev safe default — never use in prod) ───────────────────────────
+security:
+  api-key-secret: dev-only-insecure-secret-do-not-use-in-prod-ever
+
+# ── CORS (dev — allow local frontend) ─────────────────────────────────────────
+cors:
+  allowed-origins: http://localhost:3000,http://localhost:3001
