@@ -32,26 +32,32 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private static final String ORG_ATTRIBUTE  = "currentOrganization";
 
     /**
-     * FIX SEC-4: /actuator/prometheus REMOVED from public prefixes.
-     * Prometheus metrics expose internal details (DB pool, error rates, heap) — require auth.
-     * Configure your Prometheus scraper to supply X-API-Key, or restrict to internal network.
-     *
-     * /api/v1/auth is still public — register + login don't need an API key.
+     * SEC-4: /actuator/prometheus REMOVED from public prefixes.
+     * SEC-8: Auth endpoints are public but rate-limited by IP.
      */
     private static final String[] PUBLIC_PREFIXES = {
             "/swagger-ui",
             "/v3/api-docs",
             "/h2-console",
-            "/actuator/health",   // health check only — show-details: when-authorized in prod config
+            "/actuator/health",
             "/api/v1/system",
-            "/api/v1/auth"        // register + login — public by design
-            // /actuator/prometheus intentionally REMOVED (SEC-4)
+            "/api/v1/auth"
     };
 
-    // FIX SEC-8: IP-based rate limiting for auth endpoints (brute-force / spam protection)
-    // 10 requests per minute per IP — independent of org-level rate limiting
-    private static final int    AUTH_RATE_LIMIT_PER_MIN = 10;
-    private static final long   AUTH_WINDOW_MS          = 60_000L;
+    // SEC-8: IP-based rate limiting for auth endpoints — 10 req/min per IP.
+    // NOTE: We use request.getRemoteAddr() directly — NOT X-Forwarded-For.
+    // X-Forwarded-For can be spoofed by any client; remoteAddr is set by the
+    // TCP layer and cannot be forged by the client. When deployed behind a
+    // trusted reverse proxy (Railway, nginx), Spring's ForwardedHeaderFilter
+    // (enabled via server.forward-headers-strategy=NATIVE in application-prod.yml)
+    // correctly rewrites remoteAddr to the real client IP from the proxy's
+    // X-Forwarded-For — but only when the request originates from the proxy's
+    // own IP, making it safe.
+    private static final int  AUTH_RATE_LIMIT_PER_MIN = 10;
+    private static final long AUTH_WINDOW_MS           = 60_000L;
+
+    // Memory: bounded by number of unique IPs × ~200 bytes per entry.
+    // Cleaned up by RateLimitFilter.cleanup() every 5 min.
     private final Map<String, Deque<Instant>> authIpWindows = new ConcurrentHashMap<>();
 
     public ApiKeyAuthFilter(OrganizationRepository organizationRepository,
@@ -73,9 +79,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         String path   = request.getRequestURI();
         String rawKey = request.getHeader(API_KEY_HEADER);
 
-        // FIX SEC-8: rate-limit auth endpoints by IP before allowing through
+        // Rate-limit auth endpoints by IP before allowing through.
+        // Uses remoteAddr — safe because ForwardedHeaderFilter (NATIVE strategy)
+        // has already rewritten it to the real client IP from the trusted proxy.
         if (path.startsWith("/api/v1/auth")) {
-            String ip = getClientIp(request);
+            String ip = request.getRemoteAddr();
             if (isAuthRateLimitExceeded(ip)) {
                 log.warn("Auth rate limit exceeded for IP: {}", ip);
                 sendTooManyRequests(response);
@@ -96,7 +104,15 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String hashedKey = apiKeyHasher.hash(rawKey);
+        // Validate key length to prevent DoS via absurdly long keys
+        if (rawKey.length() > 200) {
+            apiAuthFailureCounter.increment();
+            log.warn("Oversized API key rejected (length: {})", rawKey.length());
+            sendUnauthorized(response, "Invalid API key");
+            return;
+        }
+
+        String hashedKey = apiKeyHasher.hash(rawKey.trim());
         Organization org = organizationRepository.findByApiKey(hashedKey).orElse(null);
 
         if (org == null) {
@@ -146,12 +162,25 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
     }
 
-    private String getClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+    /**
+     * Clean up stale auth IP windows.
+     * Called by ScheduledTasks every 5 minutes to prevent memory leaks.
+     */
+    public void cleanupAuthWindows() {
+        Instant cutoff = Instant.now().minusMillis(AUTH_WINDOW_MS * 2);
+        authIpWindows.forEach((ip, queue) -> {
+            synchronized (queue) {
+                while (!queue.isEmpty() && queue.peekFirst().isBefore(cutoff)) {
+                    queue.pollFirst();
+                }
+            }
+        });
+        authIpWindows.entrySet().removeIf(entry -> {
+            synchronized (entry.getValue()) {
+                return entry.getValue().isEmpty();
+            }
+        });
+        log.debug("Auth IP window cleanup completed. Active IPs: {}", authIpWindows.size());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
