@@ -1,4 +1,5 @@
 ## application-dev.yml — local development profile
+## ALL settings here are dev-only. NEVER used in production.
 
 spring:
   datasource:
@@ -43,6 +44,8 @@ management:
 
 server:
   port: 8080
+  # In dev, no reverse proxy exists so we don't set forward-headers-strategy.
+  # It defaults to NONE, which is correct: don't trust any X-Forwarded-* headers.
 
 # ── SECURITY (dev safe default — never use in prod) ───────────────────────────
 security:
@@ -51,3 +54,14 @@ security:
 # ── CORS (dev — allow local frontend) ─────────────────────────────────────────
 cors:
   allowed-origins: http://localhost:3000,http://localhost:3001
+
+# ── SWAGGER — ENABLED IN DEV ONLY ─────────────────────────────────────────────
+# Overrides the base config which has Swagger disabled by default.
+# This means Swagger is NEVER accidentally available in prod or unknown profiles.
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true

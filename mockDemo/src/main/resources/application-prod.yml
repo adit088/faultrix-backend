@@ -26,7 +26,7 @@ spring:
 
   h2:
     console:
-      enabled: false
+      enabled: false   # NEVER enabled in production
 
   flyway:
     enabled: true
@@ -41,14 +41,19 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] [%X{organization}] %logger{36} - %msg%n"
 
+# ── ACTUATOR — restricted surface ─────────────────────────────────────────────
+# Only health is public (used by Railway health checks).
+# prometheus/metrics/info require a valid X-API-Key (via ApiKeyAuthFilter).
+# info endpoint intentionally excluded — it leaks build metadata/tech stack.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,metrics,prometheus
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: when-authorized   # detail visible only to authenticated requests
+      show-components: when-authorized
 
 server:
   port: ${PORT:8080}
@@ -58,6 +63,16 @@ server:
     enabled: true
   error:
     include-stacktrace: never
+    include-message: never            # extra guard — never leak exception messages
+    include-binding-errors: never
+
+  # SEC-FIX: Trust proxy headers (X-Forwarded-For, X-Real-IP) ONLY from the upstream
+  # reverse proxy (Railway load balancer), not from arbitrary clients.
+  # With NATIVE strategy, Spring rewrites request.getRemoteAddr() to the real client IP
+  # from X-Forwarded-For — but only processes the header when the TCP connection comes
+  # from a trusted proxy. This makes our auth IP rate limiter (which uses remoteAddr)
+  # spoof-proof: clients can no longer bypass it by injecting a fake X-Forwarded-For header.
+  forward-headers-strategy: NATIVE
 
 # ── SECURITY — REQUIRED ───────────────────────────────────────────────────────
 # Set API_KEY_SECRET env var in Railway before deploying.
@@ -69,6 +84,15 @@ security:
 # ── CORS — REQUIRED ───────────────────────────────────────────────────────────
 # Set CORS_ALLOWED_ORIGINS to your Vercel frontend URL in Railway env vars.
 # Example: https://faultrix.vercel.app
-# Comma-separate multiple origins: https://faultrix.vercel.app,https://faultrix-git-main.vercel.app
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+# ── SWAGGER — DISABLED IN PRODUCTION ──────────────────────────────────────────
+# API docs are intentionally disabled in production. Full API schema would give
+# attackers a complete blueprint of every endpoint, method, and request format.
+# Enable only behind auth or in staging environments.
+springdoc:
+  swagger-ui:
+    enabled: false
+  api-docs:
+    enabled: false

@@ -7,7 +7,7 @@ spring:
 
   jackson:
     serialization:
-      write-dates-as-timestamps: false   # FIX BUG-6/7: Instant → ISO-8601 strings, not epoch numbers
+      write-dates-as-timestamps: false   # Instant → ISO-8601 strings, not epoch numbers
 
   datasource:
     hikari:
@@ -75,6 +75,10 @@ server:
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
   http2:
     enabled: true
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
 
 logging:
   level:
@@ -86,12 +90,17 @@ logging:
   file:
     name: logs/chaoslab.log
 
+# ── SWAGGER — default OFF ─────────────────────────────────────────────────────
+# Swagger is disabled by default in the base config.
+# The dev profile overrides this to enabled: true.
+# This ensures that if someone accidentally deploys with an unknown profile,
+# docs stay hidden rather than accidentally being exposed.
 springdoc:
   api-docs:
     path: /v3/api-docs
-    enabled: true
+    enabled: false
   swagger-ui:
     path: /swagger-ui.html
-    enabled: true
+    enabled: false
   default-consumes-media-type: application/json
   default-produces-media-type: application/json
